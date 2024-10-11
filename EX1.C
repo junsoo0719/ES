@@ -31,17 +31,13 @@ OS_STK TaskStartStk[TASK_STK_SIZE];
 OS_STK TaskStk[N_TASK][TASK_STK_SIZE];
 char TaskData[N_TASK];
 
-OS_EVENT randomsem;
+OS_EVENT* sem;
 
+OS_FLAG_GRP* r_grp;
+OS_FLAG_GRP* s_grp;
 
-OS_EVENT* mbox_to_random[4];
-OS_EVENT* mbox_to_decision[4];
-
-OS_EVENT* queue_to_random;
-OS_EVENT* queue_to_decision;
-
-void* decision_queue[4];
-void* random_queue[4];//random task에서 decision task로 보내는queue의 배열
+int send_array[4];
+char receive_array[4];
 
 INT8U select = 1; // 사용자가 커맨드에 1이나 2를 입력  
 
@@ -96,6 +92,7 @@ static void  TaskStart(void* pdata)
 #endif
 	INT16S     key;
 	INT8U i;
+	INT8U err;
 
 	pdata = pdata;                                         /* Prevent compiler warning                 */
 
@@ -108,18 +105,10 @@ static void  TaskStart(void* pdata)
 
 	OSStatInit();                                          /* Initialize uC/OS-II's statistics         */
 
-	if (select == 1) {
-		// 총 4개의 mailbox OSMboxCreate(0) 사용해서 생성 (your code)
-		for (i = 0; i < 4; i++) {
-			mbox_to_random[i] = OSMboxCreate(0);
-			mbox_to_decision[i] = OSMboxCreate(0);
-		}
-	}
-	else if (select == 2) {
-		// 크기가 4인 queue OSQCreate(0)사용해서 생성 (your code)
-		queue_to_random = OSQCreate(&random_queue[0], 4);
-		queue_to_decision = OSQCreate(&decision_queue[0], 4);
-	}
+	sem = OSSemCreate(1);
+
+	r_grp = OSFlagCreate(0x00, &err);
+	s_grp = OSFlagCreate(0x00, &err);
 
 	TaskStartCreateTasks();                                /* Create all other tasks                   */
 
@@ -239,84 +228,56 @@ static  void  TaskStartCreateTasks(void)
 void Task(void* pdata) {
 	INT8U err;
 
-	INT8U push_number;
-	int get_number[4];
-
 	INT8U i, j;
 
 	INT8U min;		// 최솟값을 담을 변수
 	INT8U min_task;
 	int task_number = (int)(*(char*)pdata - 48);//각 task의 index이다. pdata는 char타입이기 때문에 ascii 기준 -48을 하면 int형으로 바뀐다.
 
-	char push_letter;//W OR L을 저장 Decision task에서 생성한다.
-	char get_letter;//W or L을 저장 decision task에서 만든 문자를 Random task1~4중 하나가 받는다.
-
 	int fgnd_color, bgnd_color;//배경색 random task 1~4가 w or l을 받았을때 화면에 칠해줄 색
 
-	char s[10];//
-
+	char s[10];
 
 	//task_number, pdata가 0-3이면 random task, 4이면 decision task
 	if (*(char*)pdata == '4') {//decision task일 경우
 		for (;;) {
-			for (i = 0; i < N_TASK - 1; i++) {
-				if (select == 1) {
-					// randomnumber가 넘어올 때 까지 기다림. get_number배열에 값 저장 (your code)
-					get_number[i] = *(int*)OSMboxPend(mbox_to_decision[i], 0, &err);
-				}
-				else if (select == 2) {
-					// randomnumber가 넘어올 때 까지 기다림. get_number배열에 값 저장 (your code)
-					get_number[i] = *(int*)OSQPend(queue_to_decision, 0, &err);
-				}
-			}
-			min = get_number[0];
+			OSFlagPend(s_grp, 0x0F, OS_FLAG_WAIT_SET_ALL + OS_FLAG_CONSUME, 0, &err);
+			min = send_array[0];
 			min_task = 0;
 			for (i = 1; i < N_TASK - 1; i++) {
 				//random task가 보낸 4개의 랜덤 숫자중 가장 작은 수 찾기
-				if (get_number[i] < min) {
-					min = get_number[i];
+				if (send_array[i] < min) {
+					min = send_array[i];
 					min_task = i;
 				}
 			}
 			for (i = 0; i < N_TASK - 1; i++) {
 				if (i == min_task) {//가장 작은 task에게는 w를 아닌 것에게는 l를 보낸다.
-					push_letter = 'W';
+					receive_array[i] = 'W';
 				}
 				else {
-					push_letter = 'L';
+					receive_array[i] = 'L';
 				}
 
-				if (select == 1) {
-					// (your code)
-					OSMboxPost(mbox_to_random[i], (void*)&push_letter);
-				}
-				else if (select == 2) {
-					// (your code)
-					OSQPost(queue_to_random, (void*)&push_letter);
-				}
+				OSFlagPost(r_grp, 0x0F, OS_FLAG_SET, &err);
 			}
 			OSTimeDlyHMSM(0, 0, 5, 0);
 		}
 	}
 	else {
 		for (;;) {
-			push_number = random(64);
-			sprintf(s, "%2d", push_number);
+			OSSemPend(sem, 0, &err);
+			send_array[task_number] = random(64);
+			sprintf(s, "%2d", send_array[task_number]);
+			OSSemPost(sem);
 
 			PC_DispStr(0 + 18 * task_number, 4, "task", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
 			PC_DispChar(4 + 18 * task_number, 4, *(char*)pdata, DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
 			PC_DispStr(6 + 18 * task_number, 4, s, DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
 
-			if (select == 1) {
-				// random task에서 decision task로 post 후 pend로 기다림 (your code)				
-				OSMboxPost(mbox_to_decision[task_number], (void*)&push_number);
-				get_letter = *(char*)OSMboxPend(mbox_to_random[task_number], 0, &err);
-			}
-			else if (select == 2) {
-				// random task에서 decision task로 post 후 pend로 기다림 (your code)
-				OSQPost(queue_to_decision, (void*)&push_number);
-				get_letter = *(char*)OSQPend(queue_to_random, 0, &err);
-			}
+			OSFlagPost(s_grp, (1 << task_number), OS_FLAG_SET, &err);
+
+			OSFlagPend(r_grp, (1 << task_number), OS_FLAG_WAIT_SET_ALL + OS_FLAG_CONSUME, 0, &err);
 
 			if (*(char*)pdata == '0') {
 				bgnd_color = DISP_BGND_RED;
@@ -336,9 +297,9 @@ void Task(void* pdata) {
 			}
 			PC_DispStr(8 + 18 * task_number, 4, "[", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
 			PC_DispStr(10 + 18 * task_number, 4, "]", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-			PC_DispChar(9 + 18 * task_number, 4, get_letter, DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+			PC_DispChar(9 + 18 * task_number, 4, receive_array[task_number], DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
 
-			if (get_letter == 'W') {
+			if (receive_array[task_number] == 'W') {
 				for (j = 5; j < 24; j++) {
 					for (i = 0; i < 80; i++) {
 						PC_DispChar(i, j, ' ', fgnd_color + bgnd_color);
