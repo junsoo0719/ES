@@ -218,63 +218,111 @@ static  void  TaskStartCreateTasks(void)
 *********************************************************************************************************
 */
 
+void clearScr()
+{
+    INT8U y;
+    for (y = 5; y <= 20; y++)
+    {
+        PC_DispClrRow(y, DISP_BGND_LIGHT_GRAY);
+    }
+}
+
+INT8U rdsearch(INT8U* myRdyTbl, INT8U* myRdyGrp)
+{
+    INT8U rand_num;
+    rand_num = random(64);
+    while (myRdyTbl[rand_num >> 3] == 1)
+        rand_num = random(64);
+    *myRdyGrp |= OSMapTbl[rand_num >> 3];
+    myRdyTbl[rand_num >> 3] |= OSMapTbl[rand_num & 0x07];
+    return rand_num;
+}
+
 void  Task(void* pdata)
 {
     INT8U  x;
     INT8U  y;
     INT8U  err;
+    INT8U rand_num[4];
+    INT8U yy;
+    INT8U xx;
+    INT8U prio;
+    INT8U myRdyGrp;
+    INT8U myRdyTbl[8];
+    INT8U i;
+    INT8U j;
+    INT8U color = 0;
+    INT8U column = 0;
+    int final;
 
+    //OSSemPend(RandomSem, 0, &err);           /* Acquire semaphore to perform random numbers        */
+    //x = random(80);                          /* Find X position where task number will appear      */
+    //y = random(16);                          /* Find Y position where task number will appear      */
+    x = 0;
+    y = 5;
+    for (i = 0; i < 4; i++)
+    {
+        final = 64;
+        OSSemPend(RandomSem, 0, &err);
+        while (1)
+        {
+            myRdyGrp = 0x00;
+            memset(myRdyTbl, 0x00, sizeof(myRdyTbl));
+            x = column;
+            for (j = 0; j < 4; j++)
+            {
+                rand_num[j] = rdsearch(myRdyTbl, &myRdyGrp);
+                PC_DispChar(x++, y, '0' + (rand_num[j] / 10), DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+                PC_DispChar(x++, y, '0' + (rand_num[j] % 10), DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+                x++;
+            }
+            yy = OSUnMapTbl[myRdyGrp];
+            xx = OSUnMapTbl[myRdyTbl[yy]];
+            prio = (yy << 3) + xx;
 
-    for (;;) {
-        //OSSemPend(RandomSem, 0, &err);           /* Acquire semaphore to perform random numbers        */
-        //x = random(80);                          /* Find X position where task number will appear      */
-        //y = random(16);                          /* Find Y position where task number will appear      */
-        //OSSemPost(RandomSem);                    /* Release semaphore                                  */     
-                                                 /* Display the task number on the screen              */
-        if (*(char*)pdata == '0')
-        {
-            for (x = 0; x < 80; x++)
+            if (prio < final)
             {
-                for (y = 0; y < 16; y++)
+                final = prio;
+                switch (color)
                 {
-                    PC_DispChar(x, y + 5, *(char*)pdata, DISP_FGND_RED + DISP_BGND_RED);
+                case 0:
+                    PC_DispChar(x++, y, '0' + (prio / 10), DISP_FGND_WHITE + DISP_BGND_RED);
+                    PC_DispChar(x++, y, '0' + (prio % 10), DISP_FGND_WHITE + DISP_BGND_RED);
+                    break;
+                case 1:
+                    PC_DispChar(x++, y, '0' + (prio / 10), DISP_FGND_WHITE + DISP_BGND_BLUE);
+                    PC_DispChar(x++, y, '0' + (prio % 10), DISP_FGND_WHITE + DISP_BGND_BLUE);
+                    break;
+                case 2:
+                    PC_DispChar(x++, y, '0' + (prio / 10), DISP_FGND_WHITE + DISP_BGND_GREEN);
+                    PC_DispChar(x++, y, '0' + (prio % 10), DISP_FGND_WHITE + DISP_BGND_GREEN);
+                    break;
+                case 3:
+                    PC_DispChar(x++, y, '0' + (prio / 10), DISP_FGND_WHITE + DISP_BGND_BROWN);
+                    PC_DispChar(x++, y, '0' + (prio % 10), DISP_FGND_WHITE + DISP_BGND_BROWN);
+                    break;
+                default:
+                    break;
                 }
+                color = (color + 1) % 4;
+            }
+            y++;
+            // if column is full -> next column
+            if (y > 20) {
+                y = 5;
+                column += 15;
+            }
+            OSTimeDly(200);
+            if (final == 0) {
+                final = 64;
             }
         }
-        OSTimeDlyHMSM(0, 0, 1, 0);
-        if (*(char*)pdata == '1')
-        {
-            for (x = 0; x < 80; x++)
-            {
-                for (y = 0; y < 16; y++)
-                {
-                    PC_DispChar(x, y + 5, *(char*)pdata, DISP_FGND_BLUE + DISP_BGND_BLUE);
-                }
-            }
-        }
-        OSTimeDlyHMSM(0, 0, 1, 0);
-        if (*(char*)pdata == '2')
-        {
-            for (x = 0; x < 80; x++)
-            {
-                for (y = 0; y < 16; y++)
-                {
-                    PC_DispChar(x, y + 5, *(char*)pdata, DISP_FGND_BROWN + DISP_BGND_BROWN);
-                }
-            }
-        }
-        OSTimeDlyHMSM(0, 0, 1, 0);
-        if (*(char*)pdata == '3')
-        {
-            for (x = 0; x < 80; x++)
-            {
-                for (y = 0; y < 16; y++)
-                {
-                    PC_DispChar(x, y + 5, *(char*)pdata, DISP_FGND_GREEN + DISP_BGND_GREEN);
-                }
-            }
-        }
-        OSTimeDlyHMSM(0, 0, 1, 0);
-        OSTimeDly(1);                            /* Delay 1 clock tick                                 */
+        OSSemPost(RandomSem);
+        OSTaskDel(OS_PRIO_SELF);
     }
+    clearScr();
+    //OSSemPost(RandomSem);                    /* Release semaphore                                  */
+        /* Display the task number on the screen              */
+
+    OSTimeDly(1000);                            /* Delay 1 clock tick                                 */
 }
