@@ -19,7 +19,7 @@
 */
 
 #define          TASK_STK_SIZE     512                /* Size of each task's stacks (# of WORDs)       */
-#define N_TASK 5
+#define N_TASK 4
 
 /*
 *********************************************************************************************************
@@ -33,11 +33,13 @@ char TaskData[N_TASK];
 
 OS_EVENT* sem;
 
-OS_FLAG_GRP* r_grp;
+OS_EVENT* mbox_to_voting[3];
+OS_EVENT* queue_to_voting;
+
 OS_FLAG_GRP* s_grp;
 
-int send_array[4];
-char receive_array[4];
+int send_array[3];
+char majority;
 
 INT8U select = 1; // 사용자가 커맨드에 1이나 2를 입력  
 
@@ -106,9 +108,11 @@ static void  TaskStart(void* pdata)
 	OSStatInit();                                          /* Initialize uC/OS-II's statistics         */
 
 	sem = OSSemCreate(1);
-
-	r_grp = OSFlagCreate(0x00, &err);
 	s_grp = OSFlagCreate(0x00, &err);
+	for (i = 0; i < 3; i++) {
+		mbox_to_voting[i] = OSMboxCreate(0);
+	}
+	queue_to_voting = OSQCreate(&send_array[0], 3);
 
 	TaskStartCreateTasks();                                /* Create all other tasks                   */
 
@@ -230,84 +234,77 @@ void Task(void* pdata) {
 
 	INT8U i, j;
 
-	INT8U min;		// 최솟값을 담을 변수
-	INT8U min_task;
 	int task_number = (int)(*(char*)pdata - 48);//각 task의 index이다. pdata는 char타입이기 때문에 ascii 기준 -48을 하면 int형으로 바뀐다.
-
+	INT8U rand_num;
+	char vote, result;
+	int count;
+	int rand_master, master_task;
 	int fgnd_color, bgnd_color;//배경색 random task 1~4가 w or l을 받았을때 화면에 칠해줄 색
 
 	char s[10];
 
 	//task_number, pdata가 0-3이면 random task, 4이면 decision task
-	if (*(char*)pdata == '4') {//decision task일 경우
+	if (*(char*)pdata == '3') {//decision task일 경우
 		for (;;) {
-			OSFlagPend(s_grp, 0x0F, OS_FLAG_WAIT_SET_ALL + OS_FLAG_CONSUME, 0, &err);
-			min = send_array[0];
-			min_task = 0;
-			for (i = 1; i < N_TASK - 1; i++) {
-				//random task가 보낸 4개의 랜덤 숫자중 가장 작은 수 찾기
-				if (send_array[i] < min) {
-					min = send_array[i];
-					min_task = i;
-				}
-			}
-			for (i = 0; i < N_TASK - 1; i++) {
-				if (i == min_task) {//가장 작은 task에게는 w를 아닌 것에게는 l를 보낸다.
-					receive_array[i] = 'W';
-				}
-				else {
-					receive_array[i] = 'L';
-				}
+			rand_master = random(3);
+			OSMboxPost(mbox_to_voting[rand_master], (void*)&rand_master);
 
-				OSFlagPost(r_grp, 0x0F, OS_FLAG_SET, &err);
+			OSFlagPend(s_grp, 0x07, OS_FLAG_WAIT_SET_ALL + OS_FLAG_CONSUME, 0, &err);
+
+			OSSemPend(sem, 0, &err);
+			result = majority;
+			OSSemPost(sem);
+
+			if (result == 'O') {
+				bgnd_color = DISP_BGND_BLUE;
+				fgnd_color = DISP_FGND_BLUE;
+			}
+			else {
+				bgnd_color = DISP_BGND_RED;
+				fgnd_color = DISP_FGND_RED;
+			}
+			for (j = 5; j < 24; j++) {
+				for (i = 0; i < 80; i++) {
+					PC_DispChar(i, j, ' ', fgnd_color + bgnd_color);
+				}
 			}
 			OSTimeDlyHMSM(0, 0, 5, 0);
 		}
 	}
 	else {
 		for (;;) {
-			OSSemPend(sem, 0, &err);
-			send_array[task_number] = random(64);
-			sprintf(s, "%2d", send_array[task_number]);
-			OSSemPost(sem);
+			rand_num = random(2);
+			vote = (rand_num == 0) ? 'O' : 'X';
 
-			PC_DispStr(0 + 18 * task_number, 4, "task", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-			PC_DispChar(4 + 18 * task_number, 4, *(char*)pdata, DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-			PC_DispStr(6 + 18 * task_number, 4, s, DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+			PC_DispChar(task_number * 15, 4, vote, DISP_FGND_WHITE + DISP_BGND_BLACK);
 
-			OSFlagPost(s_grp, (1 << task_number), OS_FLAG_SET, &err);
-
-			OSFlagPend(r_grp, (1 << task_number), OS_FLAG_WAIT_SET_ALL + OS_FLAG_CONSUME, 0, &err);
-
-			if (*(char*)pdata == '0') {
-				bgnd_color = DISP_BGND_RED;
-				fgnd_color = DISP_FGND_RED;
-			}
-			else if (*(char*)pdata == '1') {
-				bgnd_color = DISP_BGND_CYAN;
-				fgnd_color = DISP_FGND_CYAN;
-			}
-			else if (*(char*)pdata == '2') {
-				bgnd_color = DISP_BGND_BLUE;
-				fgnd_color = DISP_FGND_BLUE;
-			}
-			else if (*(char*)pdata == '3') {
-				bgnd_color = DISP_BGND_GREEN;
-				fgnd_color = DISP_FGND_GREEN;
-			}
-			PC_DispStr(8 + 18 * task_number, 4, "[", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-			PC_DispStr(10 + 18 * task_number, 4, "]", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-			PC_DispChar(9 + 18 * task_number, 4, receive_array[task_number], DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
-
-			if (receive_array[task_number] == 'W') {
-				for (j = 5; j < 24; j++) {
-					for (i = 0; i < 80; i++) {
-						PC_DispChar(i, j, ' ', fgnd_color + bgnd_color);
-					}
+			master_task = *(int*)OSMboxPend(mbox_to_voting[task_number], OS_POST_OPT_BROADCAST, &err);
+			if (task_number == master_task)
+			{
+				char receive_vote[2];
+				for (i = 0; i < 2; i++)
+				{
+					receive_vote[i] = *(char*)OSQPend(queue_to_voting, 0, &err);
 				}
+				count = 0;
+				for (i = 0; i < 2; i++)
+				{
+					if (receive_vote[i] == 'O') count++;
+				}
+				if (vote == 'O') count++;
+
+				OSSemPend(sem, 0, &err);
+				majority = (count >= 2) ? 'O' : 'X';
+				OSSemPost(sem);
+
+				OSFlagPost(s_grp, 0x07, OS_FLAG_SET, &err);
 			}
+			else
+			{
+				OSQPost(queue_to_voting, (void*)&vote);
+			}
+
 			OSTimeDlyHMSM(0, 0, 5, 0);
 		}
 	}
 }
-
