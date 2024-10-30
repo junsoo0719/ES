@@ -4,15 +4,61 @@
 
 void main()
 {
-	unsigned char value = 128;
+	unsigned char value = 32;
 	DDRA = 0xff;
 	for (;;)
 	{
 		PORTA = value;
-		_delay_ms(200);
+		_delay_ms(5000);
+		value <<= 1;
+		PORTA = value;
+		_delay_ms(5000);
+		value <<= 1;
+		PORTA = value;
+		_delay_ms(5000);
 		value >>= 1;
-		if (value == 0) {
-			value = 128;
-		}
+		PORTA = value;
+		_delay_ms(5000);
+		value >>= 1;
+		PORTA = value;
+		_delay_ms(15000);
+		value <<= 1;
+		PORTA = value;
+		_delay_ms(15000);
+		value >>= 1;
+		PORTA = value;
+		_delay_ms(5000);
+		value >>= 2;
+		PORTA = value;
+		_delay_ms(10000);
+		value <<= 2;
+
+		PORTA = value;
+		_delay_ms(5000);
+		value <<= 1;
+		PORTA = value;
+		_delay_ms(5000);
+		value <<= 1;
+		PORTA = value;
+		_delay_ms(5000);
+		value >>= 1;
+		PORTA = value;
+		_delay_ms(5000);
+		value >>= 1;
+		PORTA = value;
+		_delay_ms(15000);
+		value <<= 1;
+		PORTA = value;
+		_delay_ms(10000);
+		value >>= 1;
+		PORTA = value;
+		_delay_ms(5000);
+		value <<= 1;
+		PORTA = value;
+		_delay_ms(5000);
+		value <<= 1;
+		PORTA = value;
+		_delay_ms(15000);
+		value >>= 2;
 	}
 }
