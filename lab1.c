@@ -11,20 +11,23 @@
 #define ATS75_ADDR 0x98 // 0b10011000, 7비트를 1비트 left shift
 
 #define  TASK_STK_SIZE  OS_TASK_DEF_STK_SIZE
-#define  N_TASKS        3
+#define  N_TASKS        4
 
-OS_STK TaskStk[N_TASKS][TASK_STK_SIZE];
 
-// 1. 메일 박스, 메시지 큐 관련 선언 작성하세요. 
-void* MsgQueueTbl[4];
+
+OS_STK		TaskStk[N_TASKS][TASK_STK_SIZE];
 OS_EVENT* Mbox;
-OS_EVENT* MsgQueue;
+
+// Event flag 선언하세요.
+OS_FLAG_GRP* EventFlag;
+UCHAR send[4];
 
 void write_twi_1byte_nopreset(UCHAR reg, UCHAR data);
 void write_twi_0byte_nopreset(UCHAR reg);
 void  TemperatureTask(void* data);
 void  FndTask(void* data);
 void  FndDisplayTask(void* data);
+void  LEDTask(void* data);
 
 int main(void)
 {
@@ -35,12 +38,17 @@ int main(void)
 	TCNT0 = 256 - (CPU_CLOCK_HZ / OS_TICKS_PER_SEC / 1024);
 	OS_EXIT_CRITICAL();
 
+	DDRA = 0xff;
+
+	// // Event flag 생성하세요. 
+	INT8U	err;
+	EventFlag = OSFlagCreate(0x00, &err);
 	Mbox = OSMboxCreate((void*)0);
-	MsgQueue = OSQCreate(&MsgQueueTbl[0], 4);
 
 	OSTaskCreate(TemperatureTask, (void*)0, (void*)&TaskStk[0][TASK_STK_SIZE - 1], 0);
 	OSTaskCreate(FndTask, (void*)0, (void*)&TaskStk[1][TASK_STK_SIZE - 1], 1);
-	OSTaskCreate(FndDisplayTask, (void*)0, (void*)&TaskStk[2][TASK_STK_SIZE - 1], 2);
+	OSTaskCreate(LEDTask, (void*)0, (void*)&TaskStk[2][TASK_STK_SIZE - 1], 2);
+	OSTaskCreate(FndDisplayTask, (void*)0, (void*)&TaskStk[3][TASK_STK_SIZE - 1], 3);
 	OSStart();
 
 	return 0;
@@ -95,7 +103,6 @@ void TemperatureTask(void* data)
 	write_twi_0byte_nopreset(ATS75_TEMP_REG);
 	while (1) {
 		value = ReadTemperature();
-		// 2. Mailbox 코드 작성하세요.  
 		OSMboxPost(Mbox, (void*)&value);
 		OSTimeDlyHMSM(0, 0, 1, 0);
 	}
@@ -110,14 +117,14 @@ void FndTask(void* data)
 	USHORT now_value;
 
 	while (1) {
-		// 3. Mailbox, message queue, 온도 데이터 도출 코드 작성하시오. 
 		now_value = *(USHORT*)OSMboxPend(Mbox, 0, &err);
-		if ((now_value & 0x8000) != 0x8000) // Sign 비트 체크
+
+		if ((now_value & 0x8000) != 0x8000)  // Sign 비트 체크
 			num[3] = 11;
 		else
 		{
 			num[3] = 10;
-			now_value = (~now_value) - 1; // 2’s Compliment
+			now_value = (~now_value) - 1;   // 2’s Compliment
 		}
 
 		value_int = (UCHAR)((now_value & 0x7f00) >> 8);
@@ -127,7 +134,37 @@ void FndTask(void* data)
 		num[1] = value_int % 10;
 		num[0] = ((value_deci & 0x80) == 0x80) * 5;
 
-		OSQPost(MsgQueue, (void*)num);
+
+		// send array 채우고 OSFlagPost 함수 호출하세요. 
+		for (i = 0; i < 4; i++)
+			send[i] = num[i];
+		OSFlagPost(EventFlag, 0x01, OS_FLAG_SET, &err);
+
+		OSTimeDlyHMSM(0, 0, 2, 0);
+	}
+}
+
+void LEDTask(void* data)
+{
+	INT8U	err;
+	UCHAR	value_int;
+	UCHAR   value_result = 0;
+	UCHAR* msg;
+	int i;
+
+	while (1) {
+		// OSFlagPend 함수 호출하고 출력하세요. 
+		OSFlagPend(EventFlag, 0x01, OS_FLAG_WAIT_SET_ANY, 0, &err);
+
+		for (i = 0; i < 3; i++) {
+			value_int = send[i];
+			if (value_int > 7)
+				value_result |= (1 << 7);
+			else
+				value_result |= (1 << value_int);
+		}
+		PORTA = value_result;
+		value_result = 0;
 
 		OSTimeDlyHMSM(0, 0, 1, 0);
 	}
@@ -145,13 +182,15 @@ void FndDisplayTask(void* data)
 	DDRC = 0xff;
 	DDRG = 0x0f;
 
-	// 4. message queue, 화면 출력 코드 작성하시오. 
-	display = (UCHAR*)OSQPend(MsgQueue, 0, &err);
+	// OSFlagPend 함수 호출하세요 
+	OSFlagPend(EventFlag, 0x01, OS_FLAG_WAIT_SET_ANY, 0, &err);
+
 	while (1)
 	{
 		for (i = 0; i < 4; i++)
 		{
-			PORTC = FND_DATA[display[i]];
+			// 출력하세요.
+			PORTC = FND_DATA[send[i]];
 			PORTG = fnd_sel[i];
 			if (i == 1) PORTC |= 0x80;
 			OSTimeDlyHMSM(0, 0, 0, 1);
